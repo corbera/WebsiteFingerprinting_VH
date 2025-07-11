@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Website Fingerprinting Lab</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: Arial, Helvetica, sans-serif;
+        padding: 64px;
+      }
+
+      h1 {
+        font-size: 32px;
+        margin-bottom: 16px;
+      }
+
+      p {
+        margin-bottom: 8px;
+      }
+
+      #buttons {
+        margin-bottom: 16px;
+      }
+
+      button {
+        background: #fff;
+        border: 2px solid #3498db;
+        border-radius: 4px;
+        color: #3498db;
+        cursor: pointer;
+        display: inline-block;
+        font-size: 16px;
+        margin-right: 16px;
+        padding: 8px 16px;
+      }
+
+      button.disabled {
+        background: #ccc;
+        border-color: #ccc;
+        color: #666;
+        cursor: default;
+      }
+
+      .trace {
+        margin-bottom: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Website Fingerprinting Lab</h1>
+    <div id="buttons">
+      <button id="collect-trace">Collect trace</button>
+      <button id="download-traces">Download traces</button>
+      <button id="upload-traces">Upload traces</button>
+      <input type="file" id="file-input" accept=".json" style="display: none;">
+    </div>
+    <div id="traces"></div>
+    <script src="https://d3js.org/d3.v6.js"></script>
+    <script type="text/javascript">
+      const worker = new Worker("worker.js");
+
+      const collectTraceButton = document.getElementById("collect-trace");
+      const downloadTracesButton = document.getElementById("download-traces");
+      const uploadTracesButton = document.getElementById("upload-traces");
+      const fileInput = document.getElementById("file-input");
+
+      // Default values for when the automation script isn't being used. When
+      // the script is in use, these values will get overwritten.
+      window.trace_length = 5000;
+      window.using_automation_script = false;
+
+      window.recording = false;
+      window.traces = [];
+
+      let traceIds = [];
+
+      function redrawAllTraces() {
+        // Clear existing trace displays
+        const parent = document.getElementById("traces");
+        parent.innerHTML = "";
+        traceIds = [];
+
+        if (window.traces.length === 0) return;
+
+        // Find largest value across all traces
+        const maxVal = d3.max(window.traces, (d) => d3.max(d));
+
+        window.traces.forEach((trace, index) => {
+          // Create new trace div
+          const div = document.createElement("div");
+          const traceId = "trace_" + index;
+          div.setAttribute("id", traceId);
+          div.className = "trace";
+          parent.appendChild(div);
+          traceIds.push(traceId);
+
+          // Trace dimensions
+          const width = parent.getBoundingClientRect().width;
+          const height = 64;
+
+          // Create SVG for trace
+          const svg = d3
+            .select("#" + traceId)
+            .append("svg")
+            .attr("width", width)
+            .attr("height", height);
+
+          const x = d3
+            .scaleLinear()
+            .domain([0, trace.length])
+            .range([0, width]);
+
+          const color = d3
+            .scaleQuantize()
+            .range(["#0d0887", "#7e03a8", "#cc4778", "#f89540", "#f0f921"])
+            .domain([0, maxVal]);
+
+          svg
+            .selectAll()
+            .data(trace.map((x, i) => ({ index: i, value: x })))
+            .join("rect")
+            .attr("x", (d) => x(d.index))
+            .attr("y", 0)
+            .attr("width", x(1))
+            .attr("height", height)
+            .style("fill", (d) => color(d.value));
+        });
+      }
+
+      worker.onmessage = (e) => {
+        window.recording = false;
+
+        const trace = JSON.parse(e.data);
+        window.traces.push(trace);
+
+        if (window.using_automation_script) {
+          // Don't display traces when automation script is in use
+          return;
+        }
+
+        // Redraw all traces
+        redrawAllTraces();
+
+        // Reset UI
+        collectTraceButton.innerText = "Collect trace";
+        collectTraceButton.className = "";
+      };
+
+      function collectTrace() {
+        collectTraceButton.innerText = "Collecting trace...";
+        collectTraceButton.className = "disabled";
+        window.recording = true;
+
+        worker.postMessage({
+          type: "start",
+          trace_length: window.trace_length,
+        });
+      }
+
+      collectTraceButton.onclick = () => {
+        if (window.recording) return;
+
+        window.recording = true;
+        collectTraceButton.innerText = "Starting in 3...";
+        collectTraceButton.className = "disabled";
+
+        setTimeout(() => {
+          collectTraceButton.innerText = "Starting in 2...";
+
+          setTimeout(() => {
+            collectTraceButton.innerText = "Starting in 1...";
+            setTimeout(collectTrace, 1000);
+          }, 1000);
+        }, 1000);
+      };
+
+      downloadTracesButton.onclick = () => {
+        const blob = new Blob([JSON.stringify({ traces: window.traces })], {
+          type: "application/json",
+        });
+
+        const url = URL.createObjectURL(blob);
+
+        const elem = document.createElement("a");
+        elem.href = url;
+        elem.download = "traces.json";
+        document.body.appendChild(elem);
+
+        elem.click();
+        document.body.removeChild(elem);
+      };
+
+      uploadTracesButton.onclick = () => {
+        fileInput.click();
+      };
+
+      fileInput.onchange = (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const data = JSON.parse(e.target.result);
+            window.traces = data.traces;
+
+            redrawAllTraces();
+          } catch (error) {
+            alert("Error parsing JSON file: " + error.message);
+          }
+        };
+
+        reader.readAsText(file);
+      };
+    </script>
+  </body>
+</html>
